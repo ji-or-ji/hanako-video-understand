@@ -1,6 +1,6 @@
-# 视频理解
+# Hanako 假装看视频
 
-HanaAgent 插件：把视频变成可读的文字。按画面变化自适应抽帧，转录音轨，
+HanakoAgent 的视频理解插件：把视频变成可读的文字。按画面变化自适应抽帧，转录音轨，
 交给视觉模型产出带时间戳的描述。
 
 移植自 [mai-video-adaptive](https://gitee.com/ji-or-ji/mai-video-adaptive)（麦麦插件），
