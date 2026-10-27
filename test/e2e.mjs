@@ -23,6 +23,9 @@ if (!asrKey) throw new Error("provider-catalog.json 里没有 siliconflow key");
 const video = process.argv[2];
 if (!video) throw new Error("用法: node test/e2e.mjs <video path>");
 
+const presetArg = process.argv.find((a) => a.startsWith("--preset="));
+const preset = presetArg ? presetArg.split("=")[1] : "precision";
+
 const logs = [];
 const ctx = {
   config: {
@@ -33,6 +36,7 @@ const ctx = {
     asrApiKey: asrKey,
     asrApiUrl: "https://api.siliconflow.cn/v1/audio/transcriptions",
     asrModel: "FunAudioLLM/SenseVoiceSmall",
+    asrPreset: preset,
     maxHeight: 720,
     keepTimeline: false,
   },

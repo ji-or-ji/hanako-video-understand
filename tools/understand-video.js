@@ -171,6 +171,7 @@ export async function execute(input, ctx) {
         url: cfg.asrApiUrl?.trim() || "https://api.siliconflow.cn/v1/audio/transcriptions",
         apiKey: cfg.asrApiKey?.trim() || "",
         model: cfg.asrModel?.trim() || "FunAudioLLM/SenseVoiceSmall",
+        preset: cfg.asrPreset?.trim() || "precision",
         log,
       });
     }

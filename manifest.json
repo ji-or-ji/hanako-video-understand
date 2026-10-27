@@ -63,6 +63,12 @@
           "default": "FunAudioLLM/SenseVoiceSmall",
           "description": "语音转写模型名称"
         },
+        "asrPreset": {
+          "type": "string",
+          "default": "precision",
+          "enum": ["economy", "balanced", "precision"],
+          "description": "切块预设：economy 块少、快，时间戳粗；balanced 折中；precision 块边界对齐句子停顿、时间戳最准"
+        },
         "minFrames": {
           "type": "integer",
           "default": 0,
