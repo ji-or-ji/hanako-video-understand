@@ -240,7 +240,7 @@ export async function describeVideo(fetchImpl, frames, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(timeoutMs),
+    timeoutMs,
   });
   const bodyText = await res.text();
   if (!res.ok) throw new Error(`视觉接口 HTTP ${res.status}: ${bodyText.slice(0, 300)}`);

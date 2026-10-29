@@ -1,5 +1,5 @@
 /**
- * 视频理解工具入口。
+ * 视频理解工具入口（v2 App）。
  *
  * 输入两种形态都吃：
  *   - ResourceRef（拖进对话的附件、挂载文件、本地路径）
@@ -8,21 +8,19 @@
  * 输出一段带时间戳的摘要，完整时间轴可以另存，之后追问细节时再取。
  */
 
-import { mkdtemp, rm, mkdir, writeFile, readFile, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, basename, extname } from "node:path";
 import { createMediaTools } from "../lib/media.js";
-import { planFrames, extractAt, adaptiveExtract } from "../lib/frames.js";
-import { audioTranscript, transcriptCore } from "../lib/audio.js";
+import { planFrames, extractAt } from "../lib/frames.js";
+import { audioTranscript } from "../lib/audio.js";
 import { describeVideo, mergeTracks, condenseSegments, fmtTs } from "../lib/timeline.js";
 
-export const name = "understand_video";
-export const description =
+const DESCRIPTION =
   "看懂一个视频：按画面变化自适应抽帧，转录音轨，用视觉模型产出带时间戳的描述。"
   + "适合「这个视频讲了什么」「第几秒发生了什么」这类问题。"
   + "视频可以是对话里的附件，也可以是本地路径。";
 
-export const parameters = {
+const PARAMETERS = {
   type: "object",
   properties: {
     video: {
@@ -34,62 +32,42 @@ export const parameters = {
           type: "object",
           properties: {
             kind: { type: "string", enum: ["session-file"] },
-            fileId: { type: "string" }
+            fileId: { type: "string" },
           },
-          required: ["kind", "fileId"]
+          required: ["kind", "fileId"],
         },
         {
           type: "object",
           properties: {
             kind: { type: "string", enum: ["local-file"] },
-            path: { type: "string" }
+            path: { type: "string" },
           },
-          required: ["kind", "path"]
+          required: ["kind", "path"],
         },
-        { type: "string" }
-      ]
+        { type: "string" },
+      ],
     },
     detail: {
       type: "string",
       enum: ["summary", "timeline"],
       default: "summary",
-      description: "summary 只给压缩摘要；timeline 连完整分段一起返回"
+      description: "summary 只给压缩摘要；timeline 连完整分段一起返回",
     },
     includeAudio: {
       type: "boolean",
       default: true,
-      description: "是否转录音轨，默认开"
+      description: "是否转录音轨，默认开",
     },
     maxFrames: {
       type: "integer",
-      description: "最多抽几帧，0 或省略表示自适应"
-    }
+      description: "最多抽几帧，0 或省略表示自适应",
+    },
   },
-  required: ["video"]
+  required: ["video"],
 };
 
-function pickFetch(ctx) {
-  return ctx?.network?.fetch?.bind(ctx.network) || globalThis.fetch;
-}
-
-/**
- * 配置来源三合一：host 注入的 ctx.config 优先，其次插件自己的 dataDir/config.json。
- * dev 槽里的插件有时候拿不到 host 注入值，留这一条不会误事。
- */
-async function loadConfig(ctx) {
-  const cfg = { ...(ctx?.config || {}) };
-  const missing = !cfg.visionApiKey || (cfg.asrMode !== "off" && !cfg.asrApiKey);
-  if (missing && ctx?.dataDir) {
-    try {
-      const extra = JSON.parse(await readFile(join(ctx.dataDir, "config.json"), "utf8"));
-      for (const [k, v] of Object.entries(extra)) {
-        if (cfg[k] == null || cfg[k] === "") cfg[k] = v;
-      }
-    } catch {
-      // 没有外部配置就按默认值走
-    }
-  }
-  return cfg;
+function text(body) {
+  return { content: [{ type: "text", text: body }] };
 }
 
 /** 把各种输入形态统一成 ResourceRef。 */
@@ -104,19 +82,42 @@ function toRef(video) {
 }
 
 /** materialize 的返回形态在不同版本可能是字符串或对象，这里都接住。 */
-async function materialize(ctx, ref) {
-  if (!ctx?.resources?.materialize) {
-    if (ref.kind === "local-file") return ref.path;
-    throw new Error("当前宿主不支持资源 materialize，请直接传本地路径。");
-  }
-  const out = await ctx.resources.materialize(ref);
+async function materialize(sdk, ref) {
+  const out = await sdk.resources.materialize(ref);
   if (typeof out === "string") return out;
-  // 宿主实际返回 { resourceKey, resource, filePath, version }，filePath 是那份本地副本
-  const candidates = [out?.filePath, out?.path, out?.localPath, out?.resource?.filePath, out?.resource?.path];
-  for (const p of candidates) {
-    if (typeof p === "string" && p) return p;
+  const candidates = [
+    out?.filePath,
+    out?.path,
+    out?.localPath,
+    out?.resource?.filePath,
+    out?.resource?.path,
+    out?.content?.filePath,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate) return candidate;
   }
-  throw new Error(`materialize 返回了无法识别的结果：${JSON.stringify(out).slice(0, 400)}`);
+  throw new Error(`materialize 返回了无法识别的结果：${JSON.stringify(out).slice(0, 300)}`);
+}
+
+async function refSize(sdk, ref) {
+  try {
+    const info = await sdk.resources.stat(ref);
+    const size = Number(info?.size ?? info?.content?.size ?? NaN);
+    return Number.isFinite(size) ? size : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 设置里没填就用 PATH；宿主负责解析真实路径，App 不去扫文件系统。 */
+async function resolveBinary(sdk, configured, name) {
+  const explicit = typeof configured === "string" ? configured.trim() : "";
+  if (explicit) return explicit;
+  const found = await sdk.process.resolveExecutable({ candidates: [name] });
+  if (!found?.path) {
+    throw new Error(`找不到 ${name}：先装好并让它出现在 PATH 里，或者在设置里填绝对路径`);
+  }
+  return found.path;
 }
 
 function fmtDuration(sec) {
@@ -126,31 +127,32 @@ function fmtDuration(sec) {
   return `${m}:${String(r).padStart(2, "0")}`;
 }
 
-export async function execute(input, ctx) {
-  const cfg = await loadConfig(ctx);
-  const log = ctx?.log;
+async function runUnderstanding(sdk, input) {
+  const cfg = (await sdk.config.getAll()) || {};
+  const log = sdk.logger;
   const startedAt = Date.now();
 
   const ref = toRef(input?.video);
-  if (!ref) return "需要指定视频：传会话附件或本地路径。";
+  if (!ref) return text("需要指定视频：传会话附件或本地路径。");
 
-  const ffmpeg = cfg.ffmpegPath?.trim() || "ffmpeg";
-  const ffprobe = cfg.ffprobePath?.trim() || "ffprobe";
+  const apiKey = String(cfg.visionApiKey || "").trim();
+  if (!apiKey) return text("还没配置视觉模型 API Key。设置 → 扩展 → 视频理解里填 visionApiKey 就能用。");
+
+  const ffmpeg = await resolveBinary(sdk, cfg.ffmpegPath, "ffmpeg");
+  const ffprobe = await resolveBinary(sdk, cfg.ffprobePath, "ffprobe");
   const media = createMediaTools({ ffmpeg, ffprobe, log });
 
-  const apiUrl = cfg.visionApiUrl?.trim() || "https://api.deepseek.com/chat/completions";
-  const apiKey = cfg.visionApiKey?.trim() || "";
-  const model = cfg.visionModel?.trim() || "deepseek-flash";
-  if (!apiKey) return "还没配置视觉模型 API Key。插件设置里填 visionApiKey 就能用。";
+  const apiUrl = String(cfg.visionApiUrl || "").trim() || "https://api.deepseek.com/chat/completions";
+  const model = String(cfg.visionModel || "").trim() || "deepseek-flash";
 
   let workDir = null;
   try {
-    const videoPath = await materialize(ctx, ref);
-    const st = await stat(videoPath).catch(() => null);
-    if (!st || !st.isFile()) return `找不到视频文件：${videoPath}`;
-    if (st.size < 1024) return `文件太小，不像是视频：${videoPath}`;
+    const videoPath = await materialize(sdk, ref);
+    const size = await refSize(sdk, ref);
+    if (size !== null && size < 1024) return text(`文件太小，不像是视频：${videoPath}`);
 
-    workDir = await mkdtemp(join(tmpdir(), "hana-video-"));
+    await mkdir(join(sdk.dataDir, "tmp"), { recursive: true });
+    workDir = await mkdtemp(join(sdk.dataDir, "tmp", "run-"));
     const framesDir = join(workDir, "frames");
     const audioDir = join(workDir, "audio");
 
@@ -167,11 +169,11 @@ export async function execute(input, ctx) {
     if (wantAudio) {
       audio = await audioTranscript(media, videoPath, audioDir, {
         mode: cfg.asrMode || "api",
-        fetchImpl: pickFetch(ctx),
-        url: cfg.asrApiUrl?.trim() || "https://api.siliconflow.cn/v1/audio/transcriptions",
-        apiKey: cfg.asrApiKey?.trim() || "",
-        model: cfg.asrModel?.trim() || "FunAudioLLM/SenseVoiceSmall",
-        preset: cfg.asrPreset?.trim() || "precision",
+        fetchImpl: sdk.network.fetch.bind(sdk.network),
+        url: String(cfg.asrApiUrl || "").trim() || "https://api.siliconflow.cn/v1/audio/transcriptions",
+        apiKey: String(cfg.asrApiKey || "").trim(),
+        model: String(cfg.asrModel || "").trim() || "FunAudioLLM/SenseVoiceSmall",
+        preset: String(cfg.asrPreset || "").trim() || "precision",
         log,
       });
     }
@@ -186,7 +188,7 @@ export async function execute(input, ctx) {
           : audio.reason === "asr_failed" ? "转写接口调用失败"
           : audio.reason === "disabled" ? "音频处理被关掉了"
           : `原因：${audio.reason}`;
-        return `这个文件没有画面，${why}。`;
+        return text(`这个文件没有画面，${why}。`);
       }
       const lines = [
         `音频：${basename(videoPath)}`,
@@ -200,19 +202,19 @@ export async function execute(input, ctx) {
         lines.push(condenseSegments(audio.segments, null, 60, 8) || audio.text);
       }
       lines.push("", "时间点按句长比例估算，不是词级时间戳。");
-      return lines.join("\n");
+      return text(lines.join("\n"));
     }
 
     // 3) 抽帧
-    if (!plan.times.length) return "没抽到有效帧，视频可能全是黑屏或解码失败。";
+    if (!plan.times.length) return text("没抽到有效帧，视频可能全是黑屏或解码失败。");
 
     const frames = await extractAt(media, videoPath, plan.times, framesDir, {
       maxHeight: Number(cfg.maxHeight) || 720,
     });
-    if (!frames.length) return "抽帧全部失败，检查 ffmpeg 能不能正常解码这个文件。";
+    if (!frames.length) return text("抽帧全部失败，检查 ffmpeg 能不能正常解码这个文件。");
 
-    // 3) 视觉理解
-    const vision = await describeVideo(pickFetch(ctx), frames, {
+    // 4) 视觉理解
+    const vision = await describeVideo(sdk.network.fetch.bind(sdk.network), frames, {
       transcript: audio.text || "",
       apiUrl,
       apiKey,
@@ -221,17 +223,17 @@ export async function execute(input, ctx) {
       log,
     });
 
-    // 4) 合并声画
+    // 5) 合并声画
     const visualSegs = vision.segments || [];
     const summary = visualSegs.length
       ? mergeTracks(visualSegs, audio.segments || [])
       : (vision.summary || "");
 
-    // 5) 落盘完整时间轴
+    // 6) 落盘完整时间轴
     let savedPath = "";
-    if (cfg.keepTimeline !== false && ctx?.dataDir) {
+    if (cfg.keepTimeline !== false) {
       try {
-        const dir = join(ctx.dataDir, "timelines");
+        const dir = join(sdk.dataDir, "timelines");
         await mkdir(dir, { recursive: true });
         const key = `${Date.now()}-${basename(videoPath, extname(videoPath))}`.replace(/[\\/:*?"<>|]/g, "_");
         savedPath = join(dir, `${key}.json`);
@@ -245,13 +247,13 @@ export async function execute(input, ctx) {
           usage: vision.usage || {},
           createdAt: new Date().toISOString(),
         }, null, 2), "utf8");
-      } catch (e) {
-        log?.warn?.(`timeline save failed: ${e.message}`);
+      } catch (err) {
+        await log.warn(`timeline save failed: ${err?.message || err}`);
         savedPath = "";
       }
     }
 
-    // 6) 组装输出
+    // 7) 组装输出
     const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
     const audioNote = audio.skipped
       ? (audio.reason === "no_audio" ? "无音轨"
@@ -271,33 +273,34 @@ export async function execute(input, ctx) {
 
     if (input?.detail === "timeline" && visualSegs.length) {
       lines.push("", "【完整时间轴】");
-      for (const s of visualSegs) {
-        lines.push(`${fmtTs(s.start)}-${fmtTs(s.end)} 画面：${s.text}`);
-      }
+      for (const s of visualSegs) lines.push(`${fmtTs(s.start)}-${fmtTs(s.end)} 画面：${s.text}`);
       if (audio.segments?.length) {
         lines.push("", "【语音】");
-        for (const s of audio.segments) {
-          lines.push(`${fmtTs(s.start)}-${fmtTs(s.end)} ${s.text}`);
-        }
+        for (const s of audio.segments) lines.push(`${fmtTs(s.start)}-${fmtTs(s.end)} ${s.text}`);
       }
     }
 
-    if (savedPath) {
-      lines.push("", `完整时间轴已存：${savedPath}`);
-    }
+    if (savedPath) lines.push("", `完整时间轴已存：${savedPath}`);
 
     const usage = vision.usage || {};
     if (usage.prompt_tokens || usage.completion_tokens) {
       lines.push(`视觉模型用量：输入 ${usage.prompt_tokens || 0} / 输出 ${usage.completion_tokens || 0} token`);
     }
 
-    return lines.join("\n");
-  } catch (e) {
-    log?.error?.("understand_video failed:", e.message);
-    return `视频理解失败：${e.message}`;
+    return text(lines.join("\n"));
+  } catch (err) {
+    await log.error(`understand_video failed: ${err?.message || err}`);
+    return text(`视频理解失败：${err?.message || err}`);
   } finally {
-    if (workDir) {
-      await rm(workDir, { recursive: true, force: true }).catch(() => {});
-    }
+    if (workDir) await rm(workDir, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+export async function register(sdk) {
+  await sdk.tools.register({
+    name: "understand_video",
+    description: DESCRIPTION,
+    parameters: PARAMETERS,
+    execute: (args) => runUnderstanding(sdk, args),
+  });
 }

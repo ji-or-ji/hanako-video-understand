@@ -7,18 +7,19 @@ HanakoAgent 的视频理解插件：把视频变成可读的文字。按画面�
 算法逻辑保持一致，外壳换成 Hana 插件。原项目是 PolyForm Noncommercial 1.0.0，
 本仓库继承同一许可，仅限非商业使用。
 
-## 安装
+## 安装（v2 App）
 
-把本目录复制到 Hana 的插件目录，重启 Hana：
+> 仓库的两条线：`main` 是 v1 插件（兼容层，永久可用），`v2`（默认分支）是 v2 App。
+> 新装请用 v2。
 
-```
-C:\Users\<你>\.hanako\plugins\video-understand\
-```
+把 `video-understand/` 整个目录（或打包出的 .zip）装进 HanaAgent
+设置 → 扩展 → 已安装 → App 类目的安装入口，首次装载会在确认卡里列出它申请的能力：
+访问你指定的文件、跑 ffmpeg/ffprobe、访问两个模型接口域名。
 
-然后在插件设置里填 `visionApiKey`。只处理纯音频的话还需要 `asrApiKey`。
+要求宿主版本：1.3.6-beta 及以上。
 
-开发和调试时也可以把本目录装进开发槽，但那套槽位在重启时会被清空，
-长期使用请走上面的正式路径。
+装完在设置 → 扩展 → 视频理解里填 `visionApiKey`。只处理纯音频的话还需要 `asrApiKey`。
+ffmpeg / ffprobe 默认从 PATH 找；找不到就在设置里写绝对路径。
 
 ## 怎么用
 
@@ -62,8 +63,8 @@ D:\videos\demo.mp4 讲了什么
 | `maxHeight` | 720 | 抽帧后最大高度，等比缩小不放大 |
 | `keepTimeline` | true | 完整时间轴落盘到插件数据目录 |
 
-配置读取顺序：宿主注入的 `ctx.config` → 插件 `dataDir/config.json`。
-开发槽里如果宿主没注入，直接把配置写成 JSON 放进去也能跑。
+配置读取顺序：`contributes.settings` 声明的字段（`ctx.config`，缺省值也由它回填）。
+密钥字段在设置页里是掩码显示的，App 自己读到的始终是真实值。
 
 ## 成本
 
@@ -116,12 +117,16 @@ content 空着回来，所以请求里显式 `thinking: {type: "disabled"}`。
 ## 目录
 
 ```
-manifest.json          插件声明、配置项、网络白名单
+video-understand/           App 目录（目录名必须等于 manifest.id）
+manifest.json           v2 清单：能力、网络白名单、设置 schema
+index.js                defineApp 入口，注册工具
+assets/icon.png         App 图标
+sdk/                    随包携带的 @hana/app-sdk 运行时闭包
 lib/media.js           ffmpeg / ffprobe 封装（execFile 数组参数，中文路径不需要转义）
 lib/frames.js          密度、平滑、CDF 撒点、指纹、新颖率、抽帧
-lib/audio.js           抽轨、静音检测、分块、转录
+lib/audio.js           抽轨、静音检测、分块、转录（multipart 手拼，因为跨进程只搬字节）
 lib/timeline.js        提示词、JSON 解析、分段规整、压缩、声画合并
-tools/understand-video.js   工具入口
+tools/understand-video.js   工具注册与主流程
 test/e2e.mjs           不经过宿主的端到端自测
 ```
 

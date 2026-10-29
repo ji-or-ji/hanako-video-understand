@@ -1,0 +1,118 @@
+{
+  "manifestVersion": 2,
+  "id": "video-understand",
+  "name": "视频理解",
+  "version": "1.0.0",
+  "entry": "index.js",
+  "icon": "assets/icon.png",
+  "description": "自适应抽帧 + 语音转录，把视频变成可读的带时间戳描述。移植自 mai-video-adaptive。",
+  "minAppVersion": "1.3.6-beta",
+  "capabilities": [
+    "app/tools.expose-to-model",
+    "app/resources.read",
+    "app/process.spawn"
+  ],
+  "network": {
+    "allowedHosts": ["api.deepseek.com", "api.siliconflow.cn"],
+    "methods": ["POST"],
+    "defaultTimeoutMs": 240000,
+    "maxResponseBytes": 33554432
+  },
+  "contributes": {
+    "settings": {
+      "title": "视频理解",
+      "schema": {
+        "properties": {
+          "ffmpegPath": {
+            "type": "string",
+            "title": "ffmpeg 路径",
+            "default": "",
+            "description": "ffmpeg 可执行文件绝对路径。留空则用 PATH 里的 ffmpeg"
+          },
+          "ffprobePath": {
+            "type": "string",
+            "title": "ffprobe 路径",
+            "default": "",
+            "description": "ffprobe 可执行文件绝对路径。留空则用 PATH 里的 ffprobe"
+          },
+          "visionApiUrl": {
+            "type": "string",
+            "title": "视觉模型接口",
+            "default": "https://api.deepseek.com/chat/completions",
+            "description": "视觉模型接口地址（OpenAI 兼容）。换域名要跟着改清单里的 network 白名单"
+          },
+          "visionApiKey": {
+            "type": "string",
+            "title": "视觉模型 Key",
+            "default": "",
+            "sensitive": true,
+            "description": "视觉模型 API Key"
+          },
+          "visionModel": {
+            "type": "string",
+            "title": "视觉模型",
+            "default": "deepseek-flash",
+            "description": "视觉模型名称"
+          },
+          "asrMode": {
+            "type": "string",
+            "title": "语音转录",
+            "default": "api",
+            "enum": ["off", "api"],
+            "description": "off 不读音频；api 走云端接口"
+          },
+          "asrApiUrl": {
+            "type": "string",
+            "title": "转写接口",
+            "default": "https://api.siliconflow.cn/v1/audio/transcriptions",
+            "description": "语音转写接口地址"
+          },
+          "asrApiKey": {
+            "type": "string",
+            "title": "转写 Key",
+            "default": "",
+            "sensitive": true,
+            "description": "语音转写 API Key"
+          },
+          "asrModel": {
+            "type": "string",
+            "title": "转写模型",
+            "default": "FunAudioLLM/SenseVoiceSmall",
+            "description": "语音转写模型名称"
+          },
+          "asrPreset": {
+            "type": "string",
+            "title": "切块预设",
+            "default": "precision",
+            "enum": ["economy", "balanced", "precision"],
+            "description": "economy 块少、快，时间戳粗；balanced 折中；precision 块边界对齐句子停顿，时间戳最准"
+          },
+          "minFrames": {
+            "type": "integer",
+            "title": "最少抽帧数",
+            "default": 0,
+            "description": "0 表示自适应"
+          },
+          "maxFrames": {
+            "type": "integer",
+            "title": "最多抽帧数",
+            "default": 0,
+            "description": "0 表示自适应（上限 48）"
+          },
+          "maxHeight": {
+            "type": "integer",
+            "title": "抽帧最大高度",
+            "default": 720,
+            "description": "等比缩小，不放大"
+          },
+          "keepTimeline": {
+            "type": "boolean",
+            "title": "保存完整时间轴",
+            "default": true,
+            "description": "把完整时间轴落到 App 数据目录，方便之后追问细节"
+          }
+        }
+      }
+    }
+  }
+}

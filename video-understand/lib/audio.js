@@ -10,6 +10,7 @@
 
 import { join } from "node:path";
 import { readFile, mkdir } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 
 const NOISE_DB = -30;
 const MIN_SPEECH_RATIO = 0.02;
@@ -101,18 +102,35 @@ export async function cutAudio(media, wav, outWav, start, end) {
   return outWav;
 }
 
-/** 转录单个音频块，multipart 上传。 */
+/**
+ * 转录单个音频块。
+ *
+ * v1 这里用的是 FormData + Blob，v2 走宿主受控出站通道（ctx.network.fetch）时，
+ * 跨进程只搬运字符串 / Uint8Array / ArrayBuffer，FormData 会被拍成 "[object FormData]"。
+ * 所以自己拼 multipart 字节，Content-Type 里的 boundary 手写，效果等价。
+ */
 export async function transcribeBlock(fetchImpl, wavPath, { url, apiKey, model, timeoutMs = 240000 }) {
   const buf = await readFile(wavPath);
-  const form = new FormData();
-  form.append("model", model);
-  form.append("file", new Blob([buf], { type: "audio/wav" }), "a.wav");
+  const boundary = `----hanaform${randomBytes(8).toString("hex")}`;
+  const head = Buffer.from(
+    `--${boundary}\r\n`
+    + `Content-Disposition: form-data; name="model"\r\n\r\n${model}\r\n`
+    + `--${boundary}\r\n`
+    + `Content-Disposition: form-data; name="file"; filename="a.wav"\r\n`
+    + `Content-Type: audio/wav\r\n\r\n`,
+    "utf8",
+  );
+  const tail = Buffer.from(`\r\n--${boundary}--\r\n`, "utf8");
+  const body = Buffer.concat([head, buf, tail]);
 
   const res = await fetchImpl(url, {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}` },
-    body: form,
-    signal: AbortSignal.timeout(timeoutMs),
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": `multipart/form-data; boundary=${boundary}`,
+    },
+    body,
+    timeoutMs,
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
