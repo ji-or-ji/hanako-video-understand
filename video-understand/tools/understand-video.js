@@ -18,34 +18,15 @@ import { describeVideo, mergeTracks, condenseSegments, fmtTs } from "../lib/time
 const DESCRIPTION =
   "看懂一个视频：按画面变化自适应抽帧，转录音轨，用视觉模型产出带时间戳的描述。"
   + "适合「这个视频讲了什么」「第几秒发生了什么」这类问题。"
-  + "视频可以是对话里的附件，也可以是本地路径。";
+  + "对话里粘过的视频直接传 fileId，本地文件传绝对路径。";
 
 const PARAMETERS = {
   type: "object",
   properties: {
     video: {
+      type: "string",
       description:
-        "视频来源。对话附件传 {kind:'session-file', fileId}，"
-        + "本地文件传 {kind:'local-file', path}，也可以直接传路径字符串。",
-      anyOf: [
-        {
-          type: "object",
-          properties: {
-            kind: { type: "string", enum: ["session-file"] },
-            fileId: { type: "string" },
-          },
-          required: ["kind", "fileId"],
-        },
-        {
-          type: "object",
-          properties: {
-            kind: { type: "string", enum: ["local-file"] },
-            path: { type: "string" },
-          },
-          required: ["kind", "path"],
-        },
-        { type: "string" },
-      ],
+        "视频来源：对话附件的 fileId（形如 sf_xxxxxxxx），或本地视频文件绝对路径。",
     },
     detail: {
       type: "string",
@@ -70,10 +51,13 @@ function text(body) {
   return { content: [{ type: "text", text: body }] };
 }
 
-/** 把各种输入形态统一成 ResourceRef。 */
+/** 把各种输入形态统一成 ResourceRef。字符串看前缀：sf_ 当附件，其余当路径。 */
 function toRef(video) {
-  if (typeof video === "string" && video.trim()) {
-    return { kind: "local-file", path: video.trim() };
+  if (typeof video === "string") {
+    const s = video.trim();
+    if (!s) return null;
+    if (/^sf_[A-Za-z0-9_-]+$/.test(s)) return { kind: "session-file", fileId: s };
+    return { kind: "local-file", path: s };
   }
   if (video && typeof video === "object" && typeof video.kind === "string") {
     return video;
@@ -113,9 +97,14 @@ async function refSize(sdk, ref) {
 async function resolveBinary(sdk, configured, name) {
   const explicit = typeof configured === "string" ? configured.trim() : "";
   if (explicit) return explicit;
-  const found = await sdk.process.resolveExecutable({ candidates: [name] });
+  // 宿主的 PATH 解析是逐目录拼名字再 stat，不带 PATHEXT，
+  // 所以 Windows 上光传 "ffmpeg" 永远找不到，得把扩展名写进候选里。
+  const candidates = process.platform === "win32"
+    ? [`${name}.exe`, `${name}.cmd`, name]
+    : [name];
+  const found = await sdk.process.resolveExecutable({ candidates });
   if (!found?.path) {
-    throw new Error(`找不到 ${name}：先装好并让它出现在 PATH 里，或者在设置里填绝对路径`);
+    throw new Error(`找不到 ${name}：确认它装在 PATH 里，或者在设置里填绝对路径`);
   }
   return found.path;
 }
@@ -144,6 +133,8 @@ async function runUnderstanding(sdk, input) {
 
   const apiUrl = String(cfg.visionApiUrl || "").trim() || "https://api.deepseek.com/chat/completions";
   const model = String(cfg.visionModel || "").trim() || "deepseek-flash";
+  // 一段描述留多少字；给得太短会把句子拦腰切断，给得太长每行读不完
+  const segChars = Math.min(2000, Math.max(20, Number(cfg.segmentChars) || 160));
 
   let workDir = null;
   try {
@@ -199,7 +190,7 @@ async function runUnderstanding(sdk, input) {
       if (input?.detail === "timeline") {
         for (const s of audio.segments) lines.push(`${fmtTs(s.start)} ${s.text}`);
       } else {
-        lines.push(condenseSegments(audio.segments, null, 60, 8) || audio.text);
+        lines.push(condenseSegments(audio.segments, null, segChars, 8) || audio.text);
       }
       lines.push("", "时间点按句长比例估算，不是词级时间戳。");
       return text(lines.join("\n"));
@@ -226,7 +217,7 @@ async function runUnderstanding(sdk, input) {
     // 5) 合并声画
     const visualSegs = vision.segments || [];
     const summary = visualSegs.length
-      ? mergeTracks(visualSegs, audio.segments || [])
+      ? mergeTracks(visualSegs, audio.segments || [], 6, segChars)
       : (vision.summary || "");
 
     // 6) 落盘完整时间轴
@@ -294,6 +285,17 @@ async function runUnderstanding(sdk, input) {
   } finally {
     if (workDir) await rm(workDir, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+/** 给钩子用的薄壳：把工具返回结构拆成纯文本。 */
+export async function understandAsText(sdk, input) {
+  const out = await runUnderstanding(sdk, input);
+  const parts = Array.isArray(out?.content)
+    ? out.content
+        .filter((c) => c && c.type === "text" && typeof c.text === "string")
+        .map((c) => c.text)
+    : [];
+  return parts.join("\n").trim();
 }
 
 export async function register(sdk) {

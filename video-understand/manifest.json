@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "video-understand",
   "name": "视频理解",
-  "version": "1.0.0",
+  "version": "1.1.4",
   "entry": "index.js",
   "icon": "assets/icon.png",
   "description": "自适应抽帧 + 语音转录，把视频变成可读的带时间戳描述。移植自 mai-video-adaptive。",
@@ -10,11 +10,18 @@
   "capabilities": [
     "app/tools.expose-to-model",
     "app/resources.read",
-    "app/process.spawn"
+    "app/process.spawn",
+    "app/hooks.agent-before-start",
+    "app/hooks.session-input"
   ],
   "network": {
-    "allowedHosts": ["api.deepseek.com", "api.siliconflow.cn"],
-    "methods": ["POST"],
+    "allowedHosts": [
+      "api.deepseek.com",
+      "api.siliconflow.cn"
+    ],
+    "methods": [
+      "POST"
+    ],
     "defaultTimeoutMs": 240000,
     "maxResponseBytes": 33554432
   },
@@ -58,7 +65,10 @@
             "type": "string",
             "title": "语音转录",
             "default": "api",
-            "enum": ["off", "api"],
+            "enum": [
+              "off",
+              "api"
+            ],
             "description": "off 不读音频；api 走云端接口"
           },
           "asrApiUrl": {
@@ -84,7 +94,11 @@
             "type": "string",
             "title": "切块预设",
             "default": "precision",
-            "enum": ["economy", "balanced", "precision"],
+            "enum": [
+              "economy",
+              "balanced",
+              "precision"
+            ],
             "description": "economy 块少、快，时间戳粗；balanced 折中；precision 块边界对齐句子停顿，时间戳最准"
           },
           "minFrames": {
@@ -105,11 +119,23 @@
             "default": 720,
             "description": "等比缩小，不放大"
           },
+          "segmentChars": {
+            "type": "integer",
+            "title": "每段描述字数",
+            "default": 160,
+            "description": "画面描述每段保留多少字。太短会把句子拦腰切断，160 左右刚好说完一件事"
+          },
           "keepTimeline": {
             "type": "boolean",
             "title": "保存完整时间轴",
             "default": true,
             "description": "把完整时间轴落到 App 数据目录，方便之后追问细节"
+          },
+          "autoUnderstand": {
+            "type": "boolean",
+            "title": "粘贴即理解",
+            "default": true,
+            "description": "对话里粘了视频就在模型开口前自动跑一遍，结果直接进上下文。关掉后只能靠调用工具"
           }
         }
       }

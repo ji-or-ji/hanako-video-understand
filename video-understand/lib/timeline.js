@@ -100,7 +100,7 @@ export function cleanSegments(items, duration = null) {
 }
 
 /** 把详细时间轴压成粗粒度摘要（注入上下文用）。 */
-export function condenseSegments(segments, granularity = null, segChars = 40, targetLines = 6) {
+export function condenseSegments(segments, granularity = null, segChars = 160, targetLines = 6) {
   if (!segments || !segments.length) return "";
   if (segments.length <= targetLines) {
     return segments
@@ -137,7 +137,7 @@ export function condenseSegments(segments, granularity = null, segChars = 40, ta
 }
 
 /** 把视觉与音频两条轨道合成一条摘要，共用同一份行数预算。 */
-export function mergeTracks(visual, audio, targetLines = 6, segChars = 40) {
+export function mergeTracks(visual, audio, targetLines = 6, segChars = 160) {
   const items = [];
   for (const s of visual || []) {
     items.push({ start: Number(s.start || 0), end: Number(s.end || 0), kind: "画面", text: String(s.text || "").trim() });
